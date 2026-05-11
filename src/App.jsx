@@ -1,23 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 
 const API_ROOT = (import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
-const IS_REMOTE_DEPLOYMENT =
-  typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname);
-
-const demoAccounts = [
-  {
-    label: 'Admin',
-    email: 'admin@shop.local',
-    password: 'Admin123!',
-    role: 'admin',
-  },
-  {
-    label: 'Customer',
-    email: 'customer@shop.local',
-    password: 'User123!',
-    role: 'user',
-  },
-];
 
 const defaultShipping = {
   fullName: '',
@@ -38,7 +21,11 @@ const defaultProduct = {
   featured: false,
 };
 
-const defaultLogin = { email: '', password: '' };
+const defaultAuthForm = {
+  name: '',
+  email: '',
+  password: '',
+};
 
 function formatMoney(value) {
   return new Intl.NumberFormat('en-IN', {
@@ -74,6 +61,14 @@ function readStoredCart() {
   }
 }
 
+function readStoredUserEmail() {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  return window.localStorage.getItem('ecommerce-last-email') || '';
+}
+
 function saveStoredValue(key, value) {
   if (typeof window === 'undefined') {
     return;
@@ -101,13 +96,20 @@ async function request(path, options = {}, token = '') {
   return payload;
 }
 
+function getProductImage(product) {
+  const seed = encodeURIComponent(product.name || product._id || 'product');
+  return `https://picsum.photos/seed/${seed}/640/420`;
+}
+
 function App() {
   const [session, setSession] = useState(() => readStoredSession());
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
   const [cart, setCart] = useState(() => readStoredCart());
-  const [loginForm, setLoginForm] = useState(defaultLogin);
+  const [authForm, setAuthForm] = useState(() => ({ ...defaultAuthForm, email: readStoredUserEmail() }));
+  const [authMode, setAuthMode] = useState('login');
   const [shipping, setShipping] = useState(defaultShipping);
+  const [showCheckout, setShowCheckout] = useState(false);
   const [productForm, setProductForm] = useState(defaultProduct);
   const [editingProductId, setEditingProductId] = useState('');
   const [search, setSearch] = useState('');
@@ -115,6 +117,7 @@ function App() {
   const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState({ products: false, auth: false, checkout: false, admin: false, orders: false });
 
+  const isLoggedIn = Boolean(session.user && session.token);
   const isAdmin = session.user?.role === 'admin';
 
   useEffect(() => {
@@ -200,7 +203,13 @@ function App() {
     return () => {
       active = false;
     };
-  }, [session.token, session.user?.role]);
+  }, [session.token]);
+
+  useEffect(() => {
+    if (cart.length === 0) {
+      setShowCheckout(false);
+    }
+  }, [cart]);
 
   const productLookup = useMemo(() => new Map(products.map((product) => [product._id, product])), [products]);
 
@@ -225,18 +234,6 @@ function App() {
 
   const subtotal = cartLines.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
   const cartCount = cartLines.reduce((sum, item) => sum + item.quantity, 0);
-  const totalStock = products.reduce((sum, product) => sum + product.stock, 0);
-
-  const topCategory = useMemo(() => {
-    const counts = new Map();
-
-    for (const product of products) {
-      counts.set(product.category, (counts.get(product.category) || 0) + 1);
-    }
-
-    const winner = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
-    return winner ? winner[0] : 'Catalog';
-  }, [products]);
 
   function showSuccess(message) {
     setStatusMessage(message);
@@ -276,19 +273,26 @@ function App() {
     setCart([]);
   }
 
-  async function handleLogin(event) {
+  async function handleAuthSubmit(event) {
     event.preventDefault();
     setLoading((current) => ({ ...current, auth: true }));
 
     try {
-      const data = await request('/auth/login', {
+      const endpoint = authMode === 'login' ? '/auth/login' : '/auth/register';
+      const payload =
+        authMode === 'login'
+          ? { email: authForm.email, password: authForm.password }
+          : { name: authForm.name, email: authForm.email, password: authForm.password };
+
+      const data = await request(endpoint, {
         method: 'POST',
-        body: JSON.stringify(loginForm),
+        body: JSON.stringify(payload),
       });
 
       setSession(data);
-      setLoginForm(defaultLogin);
-      showSuccess(`Signed in as ${data.user.name}.`);
+      window.localStorage.setItem('ecommerce-last-email', data.user.email);
+      setAuthForm({ ...defaultAuthForm, email: data.user.email });
+      showSuccess(authMode === 'login' ? 'Signed in successfully.' : 'Account created and signed in.');
     } catch (error) {
       showError(error.message);
     } finally {
@@ -296,16 +300,15 @@ function App() {
     }
   }
 
-  function handleDemoFill(account) {
-    setLoginForm({ email: account.email, password: account.password });
-  }
-
   function logout() {
     setSession({ token: '', user: null });
     setOrders([]);
-    setLoginForm(defaultLogin);
+    setAuthMode('login');
+    setShowCheckout(false);
     setShipping(defaultShipping);
-    showSuccess('Signed out.');
+    setStatusMessage('');
+    setErrorMessage('');
+    showSuccess('Logged out. Please log in again.');
   }
 
   async function refreshOrders(token = session.token) {
@@ -353,6 +356,7 @@ function App() {
 
       clearCart();
       await refreshOrders();
+      setShowCheckout(false);
       showSuccess('Order placed successfully.');
     } catch (error) {
       showError(error.message);
@@ -475,374 +479,347 @@ function App() {
     }
   }
 
-  const deploymentNotice =
-    IS_REMOTE_DEPLOYMENT && API_ROOT === '/api'
-      ? 'Set VITE_API_URL to your Render backend before building the GitHub Pages frontend.'
-      : '';
+  if (!isLoggedIn) {
+    return (
+      <div className="auth-page">
+        <div className="auth-card">
+          <h1>Welcome to E-Commerce Platform</h1>
+          <p>Please log in to continue or create a new account.</p>
 
-  return (
-    <div className="app-shell">
-      <nav className="site-navbar">
-        <div className="brand">E-Commerce Platform</div>
-        <div className="nav-links">
-          <a href="#products">Products</a>
-          <a href="#cart">Cart ({cartCount})</a>
-          <a href="#orders">Orders</a>
-          <a href="#account">Account</a>
-          {isAdmin ? <a href="#admin">Admin</a> : null}
-        </div>
-      </nav>
+          <div className="auth-switch">
+            <button
+              type="button"
+              className={authMode === 'login' ? 'tab-button active' : 'tab-button'}
+              onClick={() => setAuthMode('login')}
+            >
+              Login
+            </button>
+            <button
+              type="button"
+              className={authMode === 'register' ? 'tab-button active' : 'tab-button'}
+              onClick={() => setAuthMode('register')}
+            >
+              Create Account
+            </button>
+          </div>
 
-      <header className="site-header">
-        <div>
-          <p className="header-kicker">Modern Online Store</p>
-          <h1>Shop smarter with fast checkout and live order tracking</h1>
-          <p className="header-copy">
-            Browse curated products, manage your cart, and place orders in a clean workflow built for web deployment.
-          </p>
-        </div>
+          {statusMessage ? <div className="banner success">{statusMessage}</div> : null}
+          {errorMessage ? <div className="banner error">{errorMessage}</div> : null}
 
-        <div className="hero-metrics">
-          <Metric label="Products" value={products.length} />
-          <Metric label="Cart Items" value={cartCount} />
-          <Metric label="In Stock" value={totalStock} />
-          <Metric label="Top Category" value={topCategory} compact />
-        </div>
-
-        {deploymentNotice ? <div className="banner warning">{deploymentNotice}</div> : null}
-        {statusMessage ? <div className="banner success">{statusMessage}</div> : null}
-        {errorMessage ? <div className="banner error">{errorMessage}</div> : null}
-      </header>
-
-      <main className="page-main">
-        <div className="page-grid">
-        <aside className="panel auth-panel" id="account">
-          <div className="panel-heading">
-            <div>
-              <p className="panel-kicker">Account</p>
-              <h2>{session.user ? 'Signed in' : 'Sign in to checkout'}</h2>
-            </div>
-            {session.user ? (
-              <button className="ghost-button" onClick={logout} type="button">
-                Logout
-              </button>
+          <form className="stack-form" onSubmit={handleAuthSubmit}>
+            {authMode === 'register' ? (
+              <label>
+                Name
+                <input
+                  value={authForm.name}
+                  onChange={(event) => setAuthForm((current) => ({ ...current, name: event.target.value }))}
+                  required
+                />
+              </label>
             ) : null}
-          </div>
 
-          {session.user ? (
-            <div className="account-summary">
-              <div>
-                <span className="meta-label">Name</span>
-                <strong>{session.user.name}</strong>
-              </div>
-              <div>
-                <span className="meta-label">Email</span>
-                <strong>{session.user.email}</strong>
-              </div>
-              <div>
-                <span className="meta-label">Role</span>
-                <strong className="role-pill">{session.user.role}</strong>
-              </div>
-            </div>
-          ) : (
-            <form className="stack-form" onSubmit={handleLogin}>
-              <label>
-                Email
-                <input
-                  type="email"
-                  value={loginForm.email}
-                  onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))}
-                  placeholder="admin@shop.local"
-                  required
-                />
-              </label>
-              <label>
-                Password
-                <input
-                  type="password"
-                  value={loginForm.password}
-                  onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
-                  placeholder="password"
-                  required
-                />
-              </label>
-              <button className="primary-button" type="submit" disabled={loading.auth}>
-                {loading.auth ? 'Signing in...' : 'Sign In'}
-              </button>
-            </form>
-          )}
-
-          <div className="demo-panel">
-            <div className="panel-subheading">Demo Accounts</div>
-            <div className="demo-grid">
-              {demoAccounts.map((account) => (
-                <button
-                  key={account.email}
-                  type="button"
-                  className="demo-card"
-                  onClick={() => handleDemoFill(account)}
-                >
-                  <span>{account.label}</span>
-                  <strong>{account.email}</strong>
-                  <small>{account.password}</small>
-                </button>
-              ))}
-            </div>
-          </div>
-        </aside>
-
-        <section className="panel catalog-panel" id="products">
-          <div className="panel-heading">
-            <div>
-              <p className="panel-kicker">Catalog</p>
-              <h2>Products</h2>
-            </div>
-            <input
-              className="search-input"
-              type="search"
-              placeholder="Search products"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
-
-          <div className="product-grid">
-            {loading.products ? <EmptyState text="Loading products..." /> : null}
-            {!loading.products && filteredProducts.length === 0 ? <EmptyState text="No products found." /> : null}
-
-            {filteredProducts.map((product) => (
-              <ProductCard
-                key={product._id}
-                product={product}
-                onAdd={() => addToCart(product)}
-                onEdit={isAdmin ? () => beginEditProduct(product) : undefined}
-                onDelete={isAdmin ? () => deleteProduct(product._id) : undefined}
-              />
-            ))}
-          </div>
-        </section>
-
-        <section className="panel cart-panel" id="cart">
-          <div className="panel-heading">
-            <div>
-              <p className="panel-kicker">Cart</p>
-              <h2>Checkout</h2>
-            </div>
-            <div className="cart-total">{formatMoney(subtotal)}</div>
-          </div>
-
-          {cartLines.length === 0 ? <EmptyState text="Add products to start a cart." /> : null}
-
-          <div className="cart-list">
-            {cartLines.map((item) => (
-              <div className="cart-row" key={item.productId}>
-                <div>
-                  <strong>{item.product.name}</strong>
-                  <p>{item.product.category}</p>
-                </div>
-                <div className="cart-actions">
-                  <button type="button" onClick={() => updateCartQuantity(item.productId, item.quantity - 1)}>
-                    -
-                  </button>
-                  <span>{item.quantity}</span>
-                  <button
-                    type="button"
-                    onClick={() => updateCartQuantity(item.productId, Math.min(item.quantity + 1, item.product.stock))}
-                  >
-                    +
-                  </button>
-                </div>
-                <div className="cart-price">{formatMoney(item.product.price * item.quantity)}</div>
-              </div>
-            ))}
-          </div>
-
-          <form className="stack-form checkout-form" onSubmit={handleCheckout}>
-            <label>
-              Full name
-              <input
-                value={shipping.fullName}
-                onChange={(event) => setShipping((current) => ({ ...current, fullName: event.target.value }))}
-                required
-              />
-            </label>
             <label>
               Email
               <input
                 type="email"
-                value={shipping.email}
-                onChange={(event) => setShipping((current) => ({ ...current, email: event.target.value }))}
+                value={authForm.email}
+                onChange={(event) => setAuthForm((current) => ({ ...current, email: event.target.value }))}
                 required
               />
             </label>
+
             <label>
-              Address
+              Password
               <input
-                value={shipping.address}
-                onChange={(event) => setShipping((current) => ({ ...current, address: event.target.value }))}
+                type="password"
+                value={authForm.password}
+                onChange={(event) => setAuthForm((current) => ({ ...current, password: event.target.value }))}
                 required
               />
             </label>
-            <div className="two-col">
-              <label>
-                City
-                <input
-                  value={shipping.city}
-                  onChange={(event) => setShipping((current) => ({ ...current, city: event.target.value }))}
-                  required
-                />
-              </label>
-              <label>
-                Country
-                <input
-                  value={shipping.country}
-                  onChange={(event) => setShipping((current) => ({ ...current, country: event.target.value }))}
-                  required
-                />
-              </label>
-            </div>
-            <label>
-              Postal code
-              <input
-                value={shipping.postalCode}
-                onChange={(event) => setShipping((current) => ({ ...current, postalCode: event.target.value }))}
-                required
-              />
-            </label>
-            <button className="primary-button" type="submit" disabled={loading.checkout || cartLines.length === 0}>
-              {loading.checkout ? 'Placing order...' : 'Place Order'}
+
+            <button className="primary-button" type="submit" disabled={loading.auth}>
+              {loading.auth ? 'Please wait...' : authMode === 'login' ? 'Login' : 'Create Account'}
             </button>
           </form>
-        </section>
+        </div>
+      </div>
+    );
+  }
 
-        <section className="panel orders-panel" id="orders">
-          <div className="panel-heading">
-            <div>
-              <p className="panel-kicker">Tracking</p>
-              <h2>{isAdmin ? 'All Orders' : 'My Orders'}</h2>
-            </div>
-            <span className="tiny-pill">{orders.length} total</span>
-          </div>
+  return (
+    <div className="app-shell">
+      <nav className="site-navbar">
+        <button className="ghost-button" onClick={logout} type="button">
+          Logout
+        </button>
+      </nav>
 
-          {loading.orders ? <EmptyState text="Loading orders..." /> : null}
-          {!loading.orders && orders.length === 0 ? <EmptyState text="No orders yet." /> : null}
+      <header className="site-header">
+        <h1>Welcome, {session.user.name}</h1>
+        <p>Browse products, add items to cart, and continue to checkout when ready.</p>
+      </header>
 
-          <div className="order-list">
-            {orders.map((order) => (
-              <OrderCard key={order._id} order={order} isAdmin={isAdmin} onStatusChange={updateOrderStatus} />
-            ))}
-          </div>
-        </section>
-
-        {isAdmin ? (
-          <section className="panel admin-panel" id="admin">
+      <main className="page-main">
+        <div className="page-grid">
+          <section className="panel catalog-panel">
             <div className="panel-heading">
               <div>
-                <p className="panel-kicker">Admin</p>
-                <h2>{editingProductId ? 'Edit Product' : 'Add Product'}</h2>
+                <p className="panel-kicker">Catalog</p>
+                <h2>Products</h2>
               </div>
-              <button
-                type="button"
-                className="ghost-button"
-                onClick={() => {
-                  setEditingProductId('');
-                  setProductForm(defaultProduct);
-                }}
-              >
-                Reset
-              </button>
+              <input
+                className="search-input"
+                type="search"
+                placeholder="Search products"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
             </div>
 
-            <form className="stack-form" onSubmit={handleProductSubmit}>
-              <label>
-                Name
-                <input
-                  value={productForm.name}
-                  onChange={(event) => setProductForm((current) => ({ ...current, name: event.target.value }))}
-                  required
+            {statusMessage ? <div className="banner success">{statusMessage}</div> : null}
+            {errorMessage ? <div className="banner error">{errorMessage}</div> : null}
+
+            <div className="product-grid">
+              {loading.products ? <EmptyState text="Loading products..." /> : null}
+              {!loading.products && filteredProducts.length === 0 ? <EmptyState text="No products found." /> : null}
+
+              {filteredProducts.map((product) => (
+                <ProductCard
+                  key={product._id}
+                  product={product}
+                  onAdd={() => addToCart(product)}
+                  onEdit={isAdmin ? () => beginEditProduct(product) : undefined}
+                  onDelete={isAdmin ? () => deleteProduct(product._id) : undefined}
                 />
-              </label>
-              <label>
-                Description
-                <textarea
-                  rows="4"
-                  value={productForm.description}
-                  onChange={(event) => setProductForm((current) => ({ ...current, description: event.target.value }))}
-                  required
-                />
-              </label>
-              <div className="two-col">
-                <label>
-                  Category
-                  <input
-                    value={productForm.category}
-                    onChange={(event) => setProductForm((current) => ({ ...current, category: event.target.value }))}
-                    required
-                  />
-                </label>
-                <label>
-                  Accent
-                  <input
-                    type="color"
-                    value={productForm.accent}
-                    onChange={(event) => setProductForm((current) => ({ ...current, accent: event.target.value }))}
-                  />
-                </label>
-              </div>
-              <div className="two-col">
-                <label>
-                  Price
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={productForm.price}
-                    onChange={(event) => setProductForm((current) => ({ ...current, price: event.target.value }))}
-                    required
-                  />
-                </label>
-                <label>
-                  Stock
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={productForm.stock}
-                    onChange={(event) => setProductForm((current) => ({ ...current, stock: event.target.value }))}
-                    required
-                  />
-                </label>
-              </div>
-              <label className="checkbox-line">
-                <input
-                  type="checkbox"
-                  checked={productForm.featured}
-                  onChange={(event) => setProductForm((current) => ({ ...current, featured: event.target.checked }))}
-                />
-                Featured product
-              </label>
-              <button className="primary-button" type="submit" disabled={loading.admin}>
-                {loading.admin ? 'Saving...' : editingProductId ? 'Update Product' : 'Create Product'}
-              </button>
-            </form>
+              ))}
+            </div>
           </section>
-        ) : null}
+
+          <section className="panel cart-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-kicker">Cart</p>
+                <h2>My Cart</h2>
+              </div>
+              <div className="cart-total">{formatMoney(subtotal)}</div>
+            </div>
+
+            {cartLines.length === 0 ? <EmptyState text="Add products to your cart." /> : null}
+
+            <div className="cart-list">
+              {cartLines.map((item) => (
+                <div className="cart-row" key={item.productId}>
+                  <div>
+                    <strong>{item.product.name}</strong>
+                    <p>{item.product.category}</p>
+                  </div>
+                  <div className="cart-actions">
+                    <button type="button" onClick={() => updateCartQuantity(item.productId, item.quantity - 1)}>
+                      -
+                    </button>
+                    <span>{item.quantity}</span>
+                    <button
+                      type="button"
+                      onClick={() => updateCartQuantity(item.productId, Math.min(item.quantity + 1, item.product.stock))}
+                    >
+                      +
+                    </button>
+                  </div>
+                  <div className="cart-price">{formatMoney(item.product.price * item.quantity)}</div>
+                </div>
+              ))}
+            </div>
+
+            {cartLines.length > 0 && !showCheckout ? (
+              <button className="primary-button checkout-open" type="button" onClick={() => setShowCheckout(true)}>
+                Checkout
+              </button>
+            ) : null}
+
+            {showCheckout ? (
+              <form className="stack-form checkout-form" onSubmit={handleCheckout}>
+                <label>
+                  Full name
+                  <input
+                    value={shipping.fullName}
+                    onChange={(event) => setShipping((current) => ({ ...current, fullName: event.target.value }))}
+                    required
+                  />
+                </label>
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={shipping.email}
+                    onChange={(event) => setShipping((current) => ({ ...current, email: event.target.value }))}
+                    required
+                  />
+                </label>
+                <label>
+                  Address
+                  <input
+                    value={shipping.address}
+                    onChange={(event) => setShipping((current) => ({ ...current, address: event.target.value }))}
+                    required
+                  />
+                </label>
+                <div className="two-col">
+                  <label>
+                    City
+                    <input
+                      value={shipping.city}
+                      onChange={(event) => setShipping((current) => ({ ...current, city: event.target.value }))}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Country
+                    <input
+                      value={shipping.country}
+                      onChange={(event) => setShipping((current) => ({ ...current, country: event.target.value }))}
+                      required
+                    />
+                  </label>
+                </div>
+                <label>
+                  Postal code
+                  <input
+                    value={shipping.postalCode}
+                    onChange={(event) => setShipping((current) => ({ ...current, postalCode: event.target.value }))}
+                    required
+                  />
+                </label>
+                <div className="checkout-actions">
+                  <button className="ghost-button" type="button" onClick={() => setShowCheckout(false)}>
+                    Cancel
+                  </button>
+                  <button className="primary-button" type="submit" disabled={loading.checkout || cartLines.length === 0}>
+                    {loading.checkout ? 'Placing order...' : 'Place Order'}
+                  </button>
+                </div>
+              </form>
+            ) : null}
+          </section>
+
+          <section className="panel orders-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-kicker">Orders</p>
+                <h2>{isAdmin ? 'All Orders' : 'My Orders'}</h2>
+              </div>
+              <span className="tiny-pill">{orders.length} total</span>
+            </div>
+
+            {loading.orders ? <EmptyState text="Loading orders..." /> : null}
+            {!loading.orders && orders.length === 0 ? <EmptyState text="No orders yet." /> : null}
+
+            <div className="order-list">
+              {orders.map((order) => (
+                <OrderCard key={order._id} order={order} isAdmin={isAdmin} onStatusChange={updateOrderStatus} />
+              ))}
+            </div>
+          </section>
+
+          {isAdmin ? (
+            <section className="panel admin-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="panel-kicker">Admin</p>
+                  <h2>{editingProductId ? 'Edit Product' : 'Add Product'}</h2>
+                </div>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={() => {
+                    setEditingProductId('');
+                    setProductForm(defaultProduct);
+                  }}
+                >
+                  Reset
+                </button>
+              </div>
+
+              <form className="stack-form" onSubmit={handleProductSubmit}>
+                <label>
+                  Name
+                  <input
+                    value={productForm.name}
+                    onChange={(event) => setProductForm((current) => ({ ...current, name: event.target.value }))}
+                    required
+                  />
+                </label>
+                <label>
+                  Description
+                  <textarea
+                    rows="4"
+                    value={productForm.description}
+                    onChange={(event) => setProductForm((current) => ({ ...current, description: event.target.value }))}
+                    required
+                  />
+                </label>
+                <div className="two-col">
+                  <label>
+                    Category
+                    <input
+                      value={productForm.category}
+                      onChange={(event) => setProductForm((current) => ({ ...current, category: event.target.value }))}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Accent
+                    <input
+                      type="color"
+                      value={productForm.accent}
+                      onChange={(event) => setProductForm((current) => ({ ...current, accent: event.target.value }))}
+                    />
+                  </label>
+                </div>
+                <div className="two-col">
+                  <label>
+                    Price
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={productForm.price}
+                      onChange={(event) => setProductForm((current) => ({ ...current, price: event.target.value }))}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Stock
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={productForm.stock}
+                      onChange={(event) => setProductForm((current) => ({ ...current, stock: event.target.value }))}
+                      required
+                    />
+                  </label>
+                </div>
+                <label className="checkbox-line">
+                  <input
+                    type="checkbox"
+                    checked={productForm.featured}
+                    onChange={(event) => setProductForm((current) => ({ ...current, featured: event.target.checked }))}
+                  />
+                  Featured product
+                </label>
+                <button className="primary-button" type="submit" disabled={loading.admin}>
+                  {loading.admin ? 'Saving...' : editingProductId ? 'Update Product' : 'Create Product'}
+                </button>
+              </form>
+            </section>
+          ) : null}
         </div>
       </main>
 
       <footer className="site-footer">
-        <p>E-Commerce Platform</p>
-        <p>Built with React, Express, MongoDB, GitHub Pages, and Render</p>
+        <p>Logged in as {session.user.email}</p>
       </footer>
-    </div>
-  );
-}
-
-function Metric({ label, value, compact = false }) {
-  return (
-    <div className={`metric ${compact ? 'metric-compact' : ''}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
     </div>
   );
 }
@@ -854,6 +831,7 @@ function EmptyState({ text }) {
 function ProductCard({ product, onAdd, onEdit, onDelete }) {
   return (
     <article className="product-card">
+      <img className="product-image" src={getProductImage(product)} alt={product.name} loading="lazy" />
       <div className="product-accent" style={{ background: product.accent }} />
       <div className="product-content">
         <div className="product-head">
