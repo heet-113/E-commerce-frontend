@@ -482,11 +482,10 @@ function App() {
       <div className="ambient ambient-two" />
       <main className="page-grid">
         <section className="hero-card panel">
-          <div className="eyebrow">E-Commerce Web Application</div>
-          <h1>Build the storefront, checkout flow, and order desk in one deployable stack.</h1>
+          <div className="eyebrow">My first project</div>
+          <h1>My Shop Website</h1>
           <p className="hero-copy">
-            Product catalog, add to cart, checkout, login, admin tools, and order tracking are wired to a
-            Render-friendly API and a GitHub Pages-ready frontend.
+            This is a simple online store with products, a cart, login, and order tracking.
           </p>
 
           <div className="hero-metrics">
