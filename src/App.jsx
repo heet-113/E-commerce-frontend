@@ -41,7 +41,11 @@ const defaultProduct = {
 const defaultLogin = { email: '', password: '' };
 
 function formatMoney(value) {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value || 0));
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0));
 }
 
 function readStoredSession() {
@@ -478,29 +482,41 @@ function App() {
 
   return (
     <div className="app-shell">
-      <div className="ambient ambient-one" />
-      <div className="ambient ambient-two" />
-      <main className="page-grid">
-        <section className="hero-card panel">
-          <div className="eyebrow">My first project</div>
-          <h1>My Shop Website</h1>
-          <p className="hero-copy">
-            This is a simple online store with products, a cart, login, and order tracking.
+      <nav className="site-navbar">
+        <div className="brand">E-Commerce Platform</div>
+        <div className="nav-links">
+          <a href="#products">Products</a>
+          <a href="#cart">Cart ({cartCount})</a>
+          <a href="#orders">Orders</a>
+          <a href="#account">Account</a>
+          {isAdmin ? <a href="#admin">Admin</a> : null}
+        </div>
+      </nav>
+
+      <header className="site-header">
+        <div>
+          <p className="header-kicker">Modern Online Store</p>
+          <h1>Shop smarter with fast checkout and live order tracking</h1>
+          <p className="header-copy">
+            Browse curated products, manage your cart, and place orders in a clean workflow built for web deployment.
           </p>
+        </div>
 
-          <div className="hero-metrics">
-            <Metric label="Products" value={products.length} />
-            <Metric label="Cart Items" value={cartCount} />
-            <Metric label="In Stock" value={totalStock} />
-            <Metric label="Top Category" value={topCategory} compact />
-          </div>
+        <div className="hero-metrics">
+          <Metric label="Products" value={products.length} />
+          <Metric label="Cart Items" value={cartCount} />
+          <Metric label="In Stock" value={totalStock} />
+          <Metric label="Top Category" value={topCategory} compact />
+        </div>
 
-          {deploymentNotice ? <div className="banner warning">{deploymentNotice}</div> : null}
-          {statusMessage ? <div className="banner success">{statusMessage}</div> : null}
-          {errorMessage ? <div className="banner error">{errorMessage}</div> : null}
-        </section>
+        {deploymentNotice ? <div className="banner warning">{deploymentNotice}</div> : null}
+        {statusMessage ? <div className="banner success">{statusMessage}</div> : null}
+        {errorMessage ? <div className="banner error">{errorMessage}</div> : null}
+      </header>
 
-        <aside className="panel auth-panel">
+      <main className="page-main">
+        <div className="page-grid">
+        <aside className="panel auth-panel" id="account">
           <div className="panel-heading">
             <div>
               <p className="panel-kicker">Account</p>
@@ -575,7 +591,7 @@ function App() {
           </div>
         </aside>
 
-        <section className="panel catalog-panel">
+        <section className="panel catalog-panel" id="products">
           <div className="panel-heading">
             <div>
               <p className="panel-kicker">Catalog</p>
@@ -606,7 +622,7 @@ function App() {
           </div>
         </section>
 
-        <section className="panel cart-panel">
+        <section className="panel cart-panel" id="cart">
           <div className="panel-heading">
             <div>
               <p className="panel-kicker">Cart</p>
@@ -699,7 +715,7 @@ function App() {
           </form>
         </section>
 
-        <section className="panel orders-panel">
+        <section className="panel orders-panel" id="orders">
           <div className="panel-heading">
             <div>
               <p className="panel-kicker">Tracking</p>
@@ -719,7 +735,7 @@ function App() {
         </section>
 
         {isAdmin ? (
-          <section className="panel admin-panel">
+          <section className="panel admin-panel" id="admin">
             <div className="panel-heading">
               <div>
                 <p className="panel-kicker">Admin</p>
@@ -811,7 +827,13 @@ function App() {
             </form>
           </section>
         ) : null}
+        </div>
       </main>
+
+      <footer className="site-footer">
+        <p>E-Commerce Platform</p>
+        <p>Built with React, Express, MongoDB, GitHub Pages, and Render</p>
+      </footer>
     </div>
   );
 }
